@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.main import app
+from app.schemas import Company, OrderSummary
 
 
 class FakeCursor:
@@ -87,3 +89,25 @@ def test_order_history_page_renders(monkeypatch):
     assert "注文履歴" in response.text
     assert "株式会社ABC" in response.text
     assert "12,000円" in response.text
+
+
+def test_immutable_models_are_frozen():
+    company = Company(id=1, name="株式会社ABC")
+    order = OrderSummary(
+        id=1,
+        order_date="2026-08-29",
+        company_name="株式会社ABC",
+        total_price=12000,
+    )
+
+    try:
+        company.name = "変更後"
+        raise AssertionError("Company should be immutable")
+    except ValidationError:
+        pass
+
+    try:
+        order.total_price = 9999
+        raise AssertionError("OrderSummary should be immutable")
+    except ValidationError:
+        pass

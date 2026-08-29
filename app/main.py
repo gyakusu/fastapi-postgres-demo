@@ -1,7 +1,15 @@
 from app.db import get_connection
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import RedirectResponse
+from app.schemas import (
+    Bento,
+    Company,
+    OrderDraft,
+    OrderItem,
+    OrderSummary,
+    QuantitySelection,
+)
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
@@ -17,7 +25,7 @@ templates.env.filters["yen"] = format_yen
 
 
 # DB queries
-def fetch_companies():
+def fetch_companies() -> list[Company]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -27,10 +35,15 @@ def fetch_companies():
                 ORDER BY name
                 """
             )
-            return cur.fetchall()
+            rows = cur.fetchall()
+
+    return [
+        Company.model_validate({"id": row[0], "name": row[1]})
+        for row in rows
+    ]
 
 
-def fetch_bentos():
+def fetch_bentos() -> list[Bento]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -40,10 +53,15 @@ def fetch_bentos():
                 ORDER BY id
                 """
             )
-            return cur.fetchall()
+            rows = cur.fetchall()
+
+    return [
+        Bento.model_validate({"id": row[0], "name": row[1], "price": row[2]})
+        for row in rows
+    ]
 
 
-def fetch_orders():
+def fetch_orders() -> list[OrderSummary]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -64,10 +82,22 @@ def fetch_orders():
                 ORDER BY o.order_date DESC, o.id DESC
                 """
             )
-            return cur.fetchall()
+            rows = cur.fetchall()
+
+    return [
+        OrderSummary.model_validate(
+            {
+                "id": row[0],
+                "order_date": row[1],
+                "company_name": row[2],
+                "total_price": row[3],
+            }
+        )
+        for row in rows
+    ]
 
 
-def fetch_order(order_id: int):
+def fetch_order(order_id: int) -> tuple[OrderSummary | None, list[OrderItem]]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -89,10 +119,19 @@ def fetch_order(order_id: int):
                 """,
                 (order_id,),
             )
-            order = cur.fetchone()
+            order_row = cur.fetchone()
 
-            if order is None:
+            if order_row is None:
                 return None, []
+
+            order = OrderSummary.model_validate(
+                {
+                    "id": order_row[0],
+                    "order_date": order_row[1],
+                    "company_name": order_row[2],
+                    "total_price": order_row[3],
+                }
+            )
 
             cur.execute(
                 """
@@ -109,16 +148,34 @@ def fetch_order(order_id: int):
                 """,
                 (order_id,),
             )
-            items = cur.fetchall()
+            item_rows = cur.fetchall()
+
+    items = [
+        OrderItem.model_validate(
+            {
+                "name": row[0],
+                "quantity": row[1],
+                "price": row[2],
+                "subtotal": row[3],
+            }
+        )
+        for row in item_rows
+    ]
 
     return order, items
 
 
 def insert_order(
     company_id: int,
-    order_date,
-    quantities: list[tuple[int, int]],
+    order_date: str,
+    quantities: tuple[QuantitySelection, ...],
 ) -> int:
+    draft = OrderDraft(
+        company_id=company_id,
+        order_date=order_date,
+        quantities=quantities,
+    )
+
     with get_connection() as conn:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -132,7 +189,7 @@ def insert_order(
                     VALUES (%s, %s, NOW())
                     RETURNING id
                     """,
-                    (company_id, order_date),
+                    (draft.company_id, draft.order_date),
                 )
                 order_id = cur.fetchone()[0]
 
@@ -146,8 +203,8 @@ def insert_order(
                     VALUES (%s, %s, %s)
                     """,
                     [
-                        (order_id, bento_id, quantity)
-                        for bento_id, quantity in quantities
+                        (order_id, item.bento_id, item.quantity)
+                        for item in draft.quantities
                     ],
                 )
 
@@ -171,8 +228,8 @@ def parse_company_id(value) -> int:
         )
 
 
-def parse_quantities(form) -> list[tuple[int, int]]:
-    quantities: list[tuple[int, int]] = []
+def parse_quantities(form) -> tuple[QuantitySelection, ...]:
+    quantities: list[QuantitySelection] = []
 
     for key, value in form.items():
         if not key.startswith("quantity_"):
@@ -185,7 +242,12 @@ def parse_quantities(form) -> list[tuple[int, int]]:
             continue
 
         if quantity > 0:
-            quantities.append((bento_id, quantity))
+            quantities.append(
+                QuantitySelection(
+                    bento_id=bento_id,
+                    quantity=quantity,
+                )
+            )
 
     if not quantities:
         raise HTTPException(
@@ -193,26 +255,16 @@ def parse_quantities(form) -> list[tuple[int, int]]:
             detail="At least one bento quantity must be greater than zero",
         )
 
-    return quantities
+    return tuple(quantities)
 
 
 # Row conversion
-def order_row_to_dict(row) -> dict:
-    return {
-        "id": row[0],
-        "order_date": row[1],
-        "company_name": row[2],
-        "total_price": row[3],
-    }
+def order_row_to_dict(row: OrderSummary) -> dict:
+    return row.model_dump()
 
 
-def item_row_to_dict(row) -> dict:
-    return {
-        "name": row[0],
-        "quantity": row[1],
-        "price": row[2],
-        "subtotal": row[3],
-    }
+def item_row_to_dict(row: OrderItem) -> dict:
+    return row.model_dump()
 
 
 # Routes
@@ -248,7 +300,7 @@ async def create_order(request: Request):
 
     order_id = insert_order(
         company_id=company_id,
-        order_date=order_date,
+        order_date=str(order_date),
         quantities=quantities,
     )
 
