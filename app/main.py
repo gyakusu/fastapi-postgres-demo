@@ -10,6 +10,13 @@ app = FastAPI()
 templates = Jinja2Templates(directory="app/templates")
 
 
+def format_yen(value):
+    return f"{int(value):,}円"
+
+
+templates.env.filters["yen"] = format_yen
+
+
 @app.get("/")
 def index(request: Request):
     with get_connection() as conn:
@@ -100,4 +107,78 @@ async def create_order(request: Request):
                         (order_id, bento_id, quantity),
                     )
 
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(
+        url=f"/orders/complete?order_id={order_id}", status_code=303
+    )
+
+
+@app.get("/orders/complete")
+def order_complete(request: Request, order_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    o.id,
+                    o.order_date,
+                    c.name AS company_name,
+                    COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
+                FROM orders o
+                JOIN companies c
+                    ON c.id = o.company_id
+                LEFT JOIN order_items oi
+                    ON oi.order_id = o.id
+                LEFT JOIN bento b
+                    ON b.id = oi.bento_id
+                WHERE o.id = %s
+                GROUP BY o.id, o.order_date, c.name
+                """,
+                (order_id,),
+            )
+            order = cur.fetchone()
+
+            if order is None:
+                raise HTTPException(status_code=404, detail="Order not found")
+
+            cur.execute(
+                """
+                SELECT
+                    b.name,
+                    oi.quantity,
+                    b.price,
+                    b.price * oi.quantity AS subtotal
+                FROM order_items oi
+                JOIN bento b
+                    ON b.id = oi.bento_id
+                WHERE oi.order_id = %s
+                ORDER BY b.id
+                """,
+                (order_id,),
+            )
+            items = cur.fetchall()
+
+    order_data = {
+        "id": order[0],
+        "order_date": order[1],
+        "company_name": order[2],
+        "total_price": order[3],
+    }
+
+    item_rows = [
+        {
+            "name": item[0],
+            "quantity": item[1],
+            "price": item[2],
+            "subtotal": item[3],
+        }
+        for item in items
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "order_complete.html",
+        {
+            "order": order_data,
+            "items": item_rows,
+        },
+    )
