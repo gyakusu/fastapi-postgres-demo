@@ -1,27 +1,25 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
-
 from app.db import get_connection
-
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
 
 app = FastAPI()
 
 templates = Jinja2Templates(directory="app/templates")
 
 
-def format_yen(value):
+# Template helpers
+def format_yen(value) -> str:
     return f"{int(value):,}円"
 
 
 templates.env.filters["yen"] = format_yen
 
 
-@app.get("/")
-def index(request: Request):
+# DB queries
+def fetch_companies():
     with get_connection() as conn:
         with conn.cursor() as cur:
-
             cur.execute(
                 """
                 SELECT id, name
@@ -29,8 +27,12 @@ def index(request: Request):
                 ORDER BY name
                 """
             )
-            companies = cur.fetchall()
+            return cur.fetchall()
 
+
+def fetch_bentos():
+    with get_connection() as conn:
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, name, price
@@ -38,82 +40,10 @@ def index(request: Request):
                 ORDER BY id
                 """
             )
-            bentos = cur.fetchall()
-
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "companies": companies,
-            "bentos": bentos,
-        },
-    )
+            return cur.fetchall()
 
 
-@app.post("/orders")
-async def create_order(request: Request):
-    form = await request.form()
-
-    company_id_raw = form.get("company_id")
-    order_date = form.get("order_date")
-
-    if company_id_raw is None or order_date is None:
-        raise HTTPException(
-            status_code=400, detail="company_id and order_date are required")
-
-    try:
-        company_id = int(company_id_raw)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=400, detail="company_id must be an integer")
-
-    quantities = []
-    for key, value in form.items():
-        if not key.startswith("quantity_"):
-            continue
-
-        try:
-            bento_id = int(key.removeprefix("quantity_"))
-            quantity = int(value)
-        except (TypeError, ValueError):
-            continue
-
-        if quantity > 0:
-            quantities.append((bento_id, quantity))
-
-    if not quantities:
-        raise HTTPException(
-            status_code=400, detail="At least one bento quantity must be greater than zero")
-
-    with get_connection() as conn:
-        with conn.transaction():
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO orders (company_id, order_date, created_at)
-                    VALUES (%s, %s, NOW())
-                    RETURNING id
-                    """,
-                    (company_id, order_date),
-                )
-                order_id = cur.fetchone()[0]
-
-                for bento_id, quantity in quantities:
-                    cur.execute(
-                        """
-                        INSERT INTO order_items (order_id, bento_id, quantity)
-                        VALUES (%s, %s, %s)
-                        """,
-                        (order_id, bento_id, quantity),
-                    )
-
-    return RedirectResponse(
-        url=f"/orders/complete?order_id={order_id}", status_code=303
-    )
-
-
-@app.get("/orders")
-def order_history(request: Request):
+def fetch_orders():
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -134,29 +64,10 @@ def order_history(request: Request):
                 ORDER BY o.order_date DESC, o.id DESC
                 """
             )
-            orders = cur.fetchall()
-
-    order_rows = [
-        {
-            "id": order[0],
-            "order_date": order[1],
-            "company_name": order[2],
-            "total_price": order[3],
-        }
-        for order in orders
-    ]
-
-    return templates.TemplateResponse(
-        request,
-        "order_history.html",
-        {
-            "orders": order_rows,
-        },
-    )
+            return cur.fetchall()
 
 
-@app.get("/orders/complete")
-def order_complete(request: Request, order_id: int):
+def fetch_order(order_id: int):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -181,7 +92,7 @@ def order_complete(request: Request, order_id: int):
             order = cur.fetchone()
 
             if order is None:
-                raise HTTPException(status_code=404, detail="Order not found")
+                return None, []
 
             cur.execute(
                 """
@@ -200,20 +111,183 @@ def order_complete(request: Request, order_id: int):
             )
             items = cur.fetchall()
 
-    order_data = {
-        "id": order[0],
-        "order_date": order[1],
-        "company_name": order[2],
-        "total_price": order[3],
+    return order, items
+
+
+def insert_order(
+    company_id: int,
+    order_date,
+    quantities: list[tuple[int, int]],
+) -> int:
+    with get_connection() as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO orders (
+                        company_id,
+                        order_date,
+                        created_at
+                    )
+                    VALUES (%s, %s, NOW())
+                    RETURNING id
+                    """,
+                    (company_id, order_date),
+                )
+                order_id = cur.fetchone()[0]
+
+                cur.executemany(
+                    """
+                    INSERT INTO order_items (
+                        order_id,
+                        bento_id,
+                        quantity
+                    )
+                    VALUES (%s, %s, %s)
+                    """,
+                    [
+                        (order_id, bento_id, quantity)
+                        for bento_id, quantity in quantities
+                    ],
+                )
+
+    return order_id
+
+
+# Form parsing
+def parse_company_id(value) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=400,
+            detail="company_id is required",
+        )
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="company_id must be an integer",
+        )
+
+
+def parse_quantities(form) -> list[tuple[int, int]]:
+    quantities: list[tuple[int, int]] = []
+
+    for key, value in form.items():
+        if not key.startswith("quantity_"):
+            continue
+
+        try:
+            bento_id = int(key.removeprefix("quantity_"))
+            quantity = int(value)
+        except (TypeError, ValueError):
+            continue
+
+        if quantity > 0:
+            quantities.append((bento_id, quantity))
+
+    if not quantities:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one bento quantity must be greater than zero",
+        )
+
+    return quantities
+
+
+# Row conversion
+def order_row_to_dict(row) -> dict:
+    return {
+        "id": row[0],
+        "order_date": row[1],
+        "company_name": row[2],
+        "total_price": row[3],
     }
 
-    item_rows = [
+
+def item_row_to_dict(row) -> dict:
+    return {
+        "name": row[0],
+        "quantity": row[1],
+        "price": row[2],
+        "subtotal": row[3],
+    }
+
+
+# Routes
+@app.get("/")
+def index(request: Request):
+    companies = fetch_companies()
+    bentos = fetch_bentos()
+
+    return templates.TemplateResponse(
+        request,
+        "index.html",
         {
-            "name": item[0],
-            "quantity": item[1],
-            "price": item[2],
-            "subtotal": item[3],
-        }
+            "companies": companies,
+            "bentos": bentos,
+        },
+    )
+
+
+@app.post("/orders")
+async def create_order(request: Request):
+    form = await request.form()
+
+    company_id = parse_company_id(form.get("company_id"))
+    order_date = form.get("order_date")
+
+    if order_date is None:
+        raise HTTPException(
+            status_code=400,
+            detail="order_date is required",
+        )
+
+    quantities = parse_quantities(form)
+
+    order_id = insert_order(
+        company_id=company_id,
+        order_date=order_date,
+        quantities=quantities,
+    )
+
+    return RedirectResponse(
+        url=f"/orders/complete?order_id={order_id}",
+        status_code=303,
+    )
+
+
+@app.get("/orders")
+def order_history(request: Request):
+    orders = [
+        order_row_to_dict(row)
+        for row in fetch_orders()
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "order_history.html",
+        {
+            "orders": orders,
+        },
+    )
+
+
+@app.get("/orders/complete")
+def order_complete(request: Request, order_id: int):
+    order, items = fetch_order(order_id)
+
+    if order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found",
+        )
+
+    order_data = order_row_to_dict(order)
+
+    item_rows = [
+        item_row_to_dict(item)
         for item in items
     ]
 
