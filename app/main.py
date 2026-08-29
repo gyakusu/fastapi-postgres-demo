@@ -112,6 +112,49 @@ async def create_order(request: Request):
     )
 
 
+@app.get("/orders")
+def order_history(request: Request):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    o.id,
+                    o.order_date,
+                    c.name AS company_name,
+                    COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
+                FROM orders o
+                JOIN companies c
+                    ON c.id = o.company_id
+                LEFT JOIN order_items oi
+                    ON oi.order_id = o.id
+                LEFT JOIN bento b
+                    ON b.id = oi.bento_id
+                GROUP BY o.id, o.order_date, c.name
+                ORDER BY o.order_date DESC, o.id DESC
+                """
+            )
+            orders = cur.fetchall()
+
+    order_rows = [
+        {
+            "id": order[0],
+            "order_date": order[1],
+            "company_name": order[2],
+            "total_price": order[3],
+        }
+        for order in orders
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "order_history.html",
+        {
+            "orders": order_rows,
+        },
+    )
+
+
 @app.get("/orders/complete")
 def order_complete(request: Request, order_id: int):
     with get_connection() as conn:
