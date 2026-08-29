@@ -508,13 +508,13 @@ bento.id = 1
 仮想環境を有効化：
 
 ```bash
-source .venv/bin/activate
+uv sync
 ```
 
 FastAPIを起動：
 
 ```bash
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
 ブラウザ：
