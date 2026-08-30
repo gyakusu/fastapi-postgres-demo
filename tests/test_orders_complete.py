@@ -149,7 +149,8 @@ def test_order_history_page_handles_date_objects_from_db(monkeypatch):
                 (2, date(2026, 8, 30), "株式会社XYZ", 4500),
             ]
 
-    monkeypatch.setattr("app.main.get_connection", lambda: DateObjectHistoryConnection())
+    monkeypatch.setattr("app.main.get_connection",
+                        lambda: DateObjectHistoryConnection())
 
     client = TestClient(app)
     response = client.get("/orders")
