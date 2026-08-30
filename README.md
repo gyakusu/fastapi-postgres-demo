@@ -179,9 +179,39 @@ erDiagram
 
 です。
 
-なお、以前のREADMEに記載されていた `allergens` / `bento_allergens` については、**現在のPythonコードからは利用されていることを確認できません**。そのため、このREADMEでは現在のアプリケーション構成には含めていません。
+なお、`allergens` / `bento_allergens` は、現在のPythonコードからは直接参照・利用されていませんが、**弁当とアレルギー情報を関連付けるための設計としては、過去のREADMEでも扱っていた構造**です。つまり「未実装」ではなく「今回は未使用のまま残している設計候補」だと理解して下さい。
 
-また、実際のPostgreSQL側の型・制約・インデックス・外部キー定義については、SQLのDDLが提示されていないため、このREADMEでは断定していません。
+このデモでは、まずは注文登録に必要な4テーブルを中心に扱っていますが、将来的には以下のような関連も考えられます。
+
+```mermaid
+erDiagram
+    bento ||--o{ bento_allergens : has
+    allergens ||--o{ bento_allergens : applies
+
+    bento {
+        id id
+        name name
+        price price
+    }
+
+    allergens {
+        id id
+        name name
+    }
+
+    bento_allergens {
+        bento_id bento_id
+        allergen_id allergen_id
+    }
+```
+
+```text
+bento N ─── N allergens
+          ↓
+    bento_allergens
+```
+
+`allergens` はアレルギー名のマスタで、`bento_allergens` は弁当とアレルギーの対応関係を表します。実際のPostgreSQL側の型・制約・インデックス・外部キー定義については、SQLのDDLが提示されていないため、このREADMEでは断定していません。
 
 ---
 
