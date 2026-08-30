@@ -354,7 +354,7 @@
             <select name="company_id" required id="company_id">
               <option value="">会社を選択してください</option>
               {% for company in companies %}
-              <option value="{{ company[0] }}">{{ company[1] }}</option>
+              <option value="{{ company.id }}">{{ company.name }}</option>
               {% endfor %}
             </select>
           </div>
@@ -370,41 +370,41 @@
               {% for bento in bentos %}
               <div
                 class="menu-item"
-                data-bento-id="{{ bento[0] }}"
-                data-bento-price="{{ bento[2] }}"
+                data-bento-id="{{ bento.id }}"
+                data-bento-price="{{ bento.price }}"
               >
                 <div class="menu-label">
-                  <div class="menu-name">{{ bento[1] }}</div>
-                  <div class="menu-price">{{ bento[2] }}円 / 個</div>
+                  <div class="menu-name">{{ bento.name }}</div>
+                  <div class="menu-price">{{ bento.price }}円 / 個</div>
                 </div>
 
-                <div class="quantity-control" aria-label="{{ bento[1] }}の数量">
+                <div class="quantity-control" aria-label="{{ bento.name }}の数量">
                   <button
                     type="button"
                     class="stepper"
                     data-action="decrease"
-                    data-bento-id="{{ bento[0] }}"
-                    aria-label="{{ bento[1] }}を1つ減らす"
+                    data-bento-id="{{ bento.id }}"
+                    aria-label="{{ bento.name }}を1つ減らす"
                   >
                     −
                   </button>
                   <input
                     class="qty-input"
                     type="number"
-                    name="quantity_{{ bento[0] }}"
+                    name="quantity_{{ bento.id }}"
                     value="0"
                     min="0"
                     step="1"
                     inputmode="numeric"
-                    data-bento-id="{{ bento[0] }}"
-                    aria-label="{{ bento[1] }}の数量"
+                    data-bento-id="{{ bento.id }}"
+                    aria-label="{{ bento.name }}の数量"
                   />
                   <button
                     type="button"
                     class="stepper"
                     data-action="increase"
-                    data-bento-id="{{ bento[0] }}"
-                    aria-label="{{ bento[1] }}を1つ増やす"
+                    data-bento-id="{{ bento.id }}"
+                    aria-label="{{ bento.name }}を1つ増やす"
                   >
                     ＋
                   </button>

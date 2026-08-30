@@ -37,6 +37,41 @@ class FakeConnection:
         return FakeCursor()
 
 
+def test_homepage_renders_company_and_bento_lists(monkeypatch):
+    class HomePageConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params
+
+        def fetchall(self):
+            if "FROM companies" in self.sql:
+                return [(1, "株式会社ABC"), (2, "株式会社XYZ")]
+            if "FROM bento" in self.sql:
+                return [(1, "唐揚げ弁当", 800), (2, "鮭弁当", 850)]
+            return []
+
+    monkeypatch.setattr("app.main.get_connection",
+                        lambda: HomePageConnection())
+
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "株式会社ABC" in response.text
+    assert "株式会社XYZ" in response.text
+    assert "唐揚げ弁当" in response.text
+    assert "鮭弁当" in response.text
+
+
 def test_order_complete_page_renders(monkeypatch):
     monkeypatch.setattr("app.main.get_connection", lambda: FakeConnection())
 
