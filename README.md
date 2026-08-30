@@ -2,9 +2,9 @@
 
 弁当の仕出し注文を題材にした、業務用デモアプリです。
 
-**FastAPI + PostgreSQL + Jinja2** というシンプルな構成で、RDBにおける会社・注文・注文明細・弁当の関係と、Web画面からの注文登録・履歴参照・注文詳細表示を確認することを目的とします。
+**FastAPI + PostgreSQL + HTML/Jinja2** というシンプルな構成で、RDBにおける1対多・多対多の関係と、Webアプリケーションからのデータ登録・取得を確認することを目的とします。
 
-現在の実装は、FastAPIのWeb層、PostgreSQLへのSQLアクセス、Pydanticによる不変なデータモデルに分離されています。
+現在の実装では、**会社を選択して弁当を数量指定し、注文を登録する**ところまでを一連の画面として実装しています。また、登録した注文の履歴と、個別の注文完了画面も提供しています。
 
 ---
 
@@ -14,14 +14,10 @@
 flowchart LR
     B[Browser]
     F[FastAPI]
-    T[Jinja2 Templates]
-    D[db.py]
     P[(PostgreSQL)]
 
     B -->|HTTP GET / POST| F
-    F --> T
-    F --> D
-    D -->|SQL| P
+    F -->|SQL| P
 ```
 
 使用技術：
@@ -32,16 +28,37 @@ flowchart LR
 - psycopg
 - PostgreSQL
 - Pydantic
-- Jinja2 / HTML
+- Jinja2
 
-フロントエンドはサーバーサイドレンダリングのHTMLを使用します。
+フロントエンドは**HTML/Jinja2を中心としたシンプルな構成**です。
+
 ReactやVueなどのフロントエンドフレームワークは使用していません。
 
 ---
 
-## 2. ディレクトリ構成
+## 2. PostgreSQL
 
-現在のPythonコードから確認できる構成は次のとおりです。
+デフォルトの接続先は `demo_db` です。
+
+`db.py` では、環境変数 `DATABASE_URL` が設定されている場合はそれを使用し、設定されていない場合は以下を使用します。
+
+```text
+dbname=demo_db
+```
+
+接続確認：
+
+```bash
+psql demo_db
+```
+
+本番環境などでは、例えば `DATABASE_URL` を設定して接続先を切り替えられます。
+
+---
+
+## 3. ディレクトリ構成
+
+現在のPythonコードから確認できるアプリケーション構成は次のとおりです。
 
 ```text
 fastapi-postgres-demo/
@@ -53,456 +70,458 @@ fastapi-postgres-demo/
 │       ├── index.html
 │       ├── order_history.html
 │       └── order_complete.html
+├── .venv/
+├── .gitignore
 └── ...
 ```
 
-`main.py` は `app/templates` をJinja2のテンプレートディレクトリとして使用しています。
+`main.py` では `app/templates` をJinja2のテンプレートディレクトリとして使用しています。
 
 ---
 
-## 3. データモデル
+## 4. データベーススキーマ
 
-アプリケーション内部では、Pydanticモデルを使用してデータを表現しています。
-
-すべてのモデルで `frozen=True` を指定しており、アプリケーションデータを不変な値として扱う設計です。
-
-### Company
-
-会社を表します。
-
-| Field | Type | Constraint |
-| --- | --- | --- |
-| `id` | `int` | - |
-| `name` | `str` | - |
-
-### Bento
-
-弁当マスタを表します。
-
-| Field | Type | Constraint |
-| --- | --- | --- |
-| `id` | `int` | - |
-| `name` | `str` | - |
-| `price` | `int` | `>= 0` |
-
-### OrderSummary
-
-注文履歴・注文概要を表します。
-
-| Field | Type | Constraint |
-| --- | --- | --- |
-| `id` | `int` | - |
-| `order_date` | `str` | - |
-| `company_name` | `str` | - |
-| `total_price` | `int` | `>= 0` |
-
-### OrderItem
-
-注文に含まれる弁当1種類分の明細を表します。
-
-| Field | Type | Constraint |
-| --- | --- | --- |
-| `name` | `str` | - |
-| `quantity` | `int` | `> 0` |
-| `price` | `int` | `>= 0` |
-| `subtotal` | `int` | `>= 0` |
-
-### QuantitySelection
-
-注文登録時に選択された弁当と数量を表します。
-
-| Field | Type | Constraint |
-| --- | --- | --- |
-| `bento_id` | `int` | `> 0` |
-| `quantity` | `int` | `> 0` |
-
-`as_db_tuple` プロパティによって、
-
-```text
-(bento_id, quantity)
-```
-
-というDB登録用のタプルに変換できます。
-
-### OrderDraft
-
-注文登録時の入力データをまとめます。
-
-| Field | Type | Constraint |
-| --- | --- | --- |
-| `company_id` | `int` | `> 0` |
-| `order_date` | `str` | - |
-| `quantities` | `tuple[QuantitySelection, ...]` | 1件以上 |
-
----
-
-## 4. PostgreSQLとの対応
-
-`db.py` のSQLから、現在のアプリケーションが利用しているテーブルは次の4つです。
+現在のアプリケーションで利用している主要なテーブルは以下です。
 
 ```mermaid
 erDiagram
-    companies ||--o{ orders : has
+    companies ||--o{ orders : places
     orders ||--o{ order_items : contains
     bento ||--o{ order_items : ordered
-
-    companies {
-        id id
-        name name
-    }
-
-    orders {
-        id id
-        company_id company_id
-        order_date order_date
-        created_at created_at
-    }
-
-    order_items {
-        order_id order_id
-        bento_id bento_id
-        quantity quantity
-    }
-
-    bento {
-        id id
-        name name
-        price price
-    }
-```
-
-コードから確認できる関係は、
-
-- `orders.company_id` → `companies.id`
-- `order_items.order_id` → `orders.id`
-- `order_items.bento_id` → `bento.id`
-
-です。
-
-なお、`allergens` / `bento_allergens` は、現在のPythonコードからは直接参照・利用されていませんが、**弁当とアレルギー情報を関連付けるための設計としては、過去のREADMEでも扱っていた構造**です。つまり「未実装」ではなく「今回は未使用のまま残している設計候補」だと理解して下さい。
-
-このデモでは、まずは注文登録に必要な4テーブルを中心に扱っていますが、将来的には以下のような関連も考えられます。
-
-```mermaid
-erDiagram
     bento ||--o{ bento_allergens : has
     allergens ||--o{ bento_allergens : applies
 
+    companies {
+        bigint id PK
+        varchar name
+        varchar contact_name
+        varchar email
+        varchar phone
+    }
+
+    orders {
+        bigint id PK
+        bigint company_id FK
+        date order_date
+        timestamp created_at
+    }
+
+    order_items {
+        bigint order_id PK,FK
+        bigint bento_id PK,FK
+        integer quantity
+    }
+
     bento {
-        id id
-        name name
-        price price
+        bigint id PK
+        varchar name
+        integer price
     }
 
     allergens {
-        id id
-        name name
+        bigint id PK
+        varchar name
     }
 
     bento_allergens {
-        bento_id bento_id
-        allergen_id allergen_id
+        bigint bento_id PK,FK
+        bigint allergen_id PK,FK
     }
 ```
 
-```text
-bento N ─── N allergens
-          ↓
-    bento_allergens
-```
+### 4.1 `companies`
 
-`allergens` はアレルギー名のマスタで、`bento_allergens` は弁当とアレルギーの対応関係を表します。実際のPostgreSQL側の型・制約・インデックス・外部キー定義については、SQLのDDLが提示されていないため、このREADMEでは断定していません。
+注文元の会社を管理します。
 
----
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `id` | BIGSERIAL | PK | 会社ID |
+| `name` | VARCHAR(200) | NOT NULL | 会社名 |
+| `contact_name` | VARCHAR(100) | | 担当者名 |
+| `email` | VARCHAR(255) | | メールアドレス |
+| `phone` | VARCHAR(50) | | 電話番号 |
 
-## 5. DBアクセス
-
-`db.py` はPostgreSQLへのアクセスと、DB上のデータをPydanticモデルへ変換する処理を担当します。
-
-### 接続
-
-接続URLは環境変数 `DATABASE_URL` から取得します。
-
-設定されていない場合は、
-
-```text
-dbname=demo_db
-```
-
-がデフォルト値として使用されます。
-
-```python
-DATABASE_URL = os.getenv("DATABASE_URL", "dbname=demo_db")
-```
-
-### 主な関数
-
-| Function | 内容 |
-| --- | --- |
-| `get_connection()` | PostgreSQLへの接続を作成 |
-| `fetch_companies()` | 会社一覧を名前順で取得 |
-| `fetch_bentos()` | 弁当一覧をID順で取得 |
-| `fetch_orders()` | 注文履歴を取得 |
-| `fetch_order(order_id)` | 指定された注文と明細を取得 |
-| `insert_order(draft)` | 注文と明細を登録 |
-
-`fetch_orders()` では、注文ごとに弁当価格と数量から合計金額を計算します。
+現在のPythonコードでは、注文画面に表示するために `id` と `name` を取得しています。
 
 ```sql
-COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
+SELECT id, name
+FROM companies
+ORDER BY name;
 ```
+
+`contact_name`、`email`、`phone` はスキーマとして保持されていますが、現在の注文処理では使用していません。
 
 ---
 
-## 6. API / Web画面
+### 4.2 `orders`
 
-現在実装されているエンドポイントは以下の4つです。
+1回の注文を管理します。
 
-### GET `/`
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `id` | BIGSERIAL | PK | 注文ID |
+| `company_id` | BIGINT | FK | 注文元会社 |
+| `order_date` | DATE | NOT NULL | 注文日 |
+| `created_at` | TIMESTAMP | NOT NULL | 登録日時 |
 
-注文登録画面を表示します。
-
-FastAPIからテンプレートへ、
-
-- `companies`
-- `bentos`
-
-を渡します。
+関係：
 
 ```mermaid
 flowchart LR
-    A[GET /] --> B[fetch_companies]
-    A --> C[fetch_bentos]
-    B --> D[index.html]
-    C --> D
-    D --> E[Browser]
+    C[companies] -->|1 : N| O[orders]
 ```
+
+1つの会社から複数の注文が発生します。
+
+注文登録時には、`company_id`、`order_date`、`created_at` が登録されます。
+
+`created_at` はSQL側で `NOW()` を使用して設定します。
 
 ---
 
-### POST `/orders`
+### 4.3 `bento`
+
+弁当マスタです。
+
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `id` | BIGSERIAL | PK | 弁当ID |
+| `name` | VARCHAR(200) | NOT NULL | 弁当名 |
+| `price` | INTEGER | NOT NULL | 価格 |
+
+現在のPythonコードでは、注文画面に表示するために `id`、`name`、`price` を取得しています。
+
+```sql
+SELECT id, name, price
+FROM bento
+ORDER BY id;
+```
+
+価格は注文履歴・注文詳細画面の合計金額計算にも使用されます。
+
+---
+
+### 4.4 `order_items`
+
+1つの注文に含まれる弁当と数量を管理します。
+
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `order_id` | BIGINT | PK, FK | 注文ID |
+| `bento_id` | BIGINT | PK, FK | 弁当ID |
+| `quantity` | INTEGER | NOT NULL | 数量 |
+
+複合主キー：
+
+```text
+PRIMARY KEY (order_id, bento_id)
+```
+
+関係：
+
+```mermaid
+flowchart LR
+    O[orders] -->|N : N| B[bento]
+    O --> OI[order_items]
+    B --> OI
+```
+
+例えば、1つの注文に複数種類の弁当を含めることができます。
+
+```text
+注文ID 1
+  ├── 唐揚げ弁当 × 10
+  ├── 鮭弁当     × 5
+  └── 幕の内弁当 × 3
+```
+
+注文登録時には、`orders` に注文ヘッダを登録した後、`order_items` に各弁当の数量を登録します。
+
+---
+
+### 4.5 `allergens`
+
+アレルギー情報のマスタです。
+
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `id` | BIGSERIAL | PK | アレルギーID |
+| `name` | VARCHAR(100) | NOT NULL, UNIQUE | アレルギー名 |
+
+このテーブルは現在のPythonコードでは直接利用していません。
+
+ただし、データベース上のスキーマとして存在するため、将来的なアレルギー情報表示を想定して残しています。
+
+---
+
+### 4.6 `bento_allergens`
+
+弁当とアレルギーの多対多関係を管理します。
+
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| `bento_id` | BIGINT | PK, FK | 弁当ID |
+| `allergen_id` | BIGINT | PK, FK | アレルギーID |
+
+関係：
+
+```mermaid
+flowchart LR
+    B[bento] -->|N : N| A[allergens]
+    B --> BA[bento_allergens]
+    A --> BA
+```
+
+例えば、次のような関係を表現できます。
+
+```text
+唐揚げ弁当
+  ├── 小麦
+  ├── 卵
+  └── 大豆
+```
+
+現在のPythonコードではまだ利用していません。
+
+---
+
+## 5. アプリケーションのデータモデル
+
+Python側では、Pydanticを利用してデータモデルを定義しています。
+
+モデルは `frozen=True` としており、生成後に変更できないイミュータブルなモデルとして扱います。
+
+### `Company`
+
+```text
+id: int
+name: str
+```
+
+### `Bento`
+
+```text
+id: int
+name: str
+price: int
+```
+
+`price` は0以上です。
+
+### `OrderSummary`
+
+```text
+id: int
+order_date: str
+company_name: str
+total_price: int
+```
+
+注文履歴・注文完了画面で使用する注文の概要です。
+
+### `OrderItem`
+
+```text
+name: str
+quantity: int
+price: int
+subtotal: int
+```
+
+注文に含まれる弁当1種類分の明細です。
+
+### `QuantitySelection`
+
+```text
+bento_id: int
+quantity: int
+```
+
+フォームから受け取った「弁当IDと数量」の組を表します。
+
+### `OrderDraft`
+
+```text
+company_id: int
+order_date: str
+quantities: tuple[QuantitySelection, ...]
+```
+
+注文登録前のデータを表します。
+
+---
+
+# 6. API / Route
+
+現在のFastAPIアプリケーションでは、以下のRouteを提供しています。
+
+| Method | Path | 内容 |
+|---|---|---|
+| GET | `/` | 注文登録画面 |
+| POST | `/orders` | 注文登録 |
+| GET | `/orders` | 注文履歴 |
+| GET | `/orders/complete` | 注文完了・注文詳細 |
+
+---
+
+## 6.1 GET `/`
+
+注文登録画面を表示します。
+
+```http
+GET /
+```
+
+FastAPIからテンプレートへ以下のデータを渡します。
+
+```text
+companies
+bentos
+```
+
+`companies` は会社選択欄、`bentos` は弁当と価格・数量入力欄の生成に利用します。
+
+---
+
+## 6.2 POST `/orders`
 
 注文を登録します。
 
-入力には、
-
-- `company_id`
-- `order_date`
-- 各弁当の数量
-
-を使用します。
-
-数量項目は、
-
-```text
-quantity_{bento_id}
+```http
+POST /orders
+Content-Type: application/x-www-form-urlencoded
 ```
 
-という形式です。
+注文には、
+
+- 注文元会社
+- 注文日
+- 1種類以上の弁当
+- 各弁当の数量
+
+が必要です。
+
+### フォーム項目
+
+```text
+company_id
+order_date
+quantity_{bento.id}
+```
 
 例えば、
 
 ```text
+company_id=1
+order_date=2026-08-30
 quantity_1=10
 quantity_2=5
+quantity_3=3
 ```
 
-なら、弁当ID `1` を10個、弁当ID `2` を5個選択したことを表します。
+のようなフォームを受け取ります。
 
-FastAPI側では `quantity_` の後ろを整数として読み取り、`QuantitySelection` に変換します。
+`quantity_N` の `N` は `bento.id` を表します。
 
-数量が0以下の項目は注文対象から除外され、1件も有効な数量が存在しない場合はHTTP 400を返します。
+FastAPI側では、`quantity_` を取り除いた文字列を整数に変換して弁当IDとして扱います。
+
+数量が0以下の項目は注文対象から除外され、1つも正の数量が存在しない場合は400エラーになります。
 
 ---
 
-### POST `/orders` の処理
+## 6.3 注文登録の処理
 
-注文登録は、注文本体と注文明細を同じトランザクションで登録します。
+注文登録は、注文ヘッダと注文明細を**同一トランザクション**で処理します。
 
 ```mermaid
 flowchart TD
-    A[POST /orders]
-    B[Parse form]
-    C[Create OrderDraft]
-    D[INSERT orders]
-    E[Get order_id]
-    F[INSERT order_items]
-    G[COMMIT]
-    H[ROLLBACK]
-
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-    D -. error .-> H
-    F -. error .-> H
+    A[POST /orders] --> B[フォームを解析]
+    B --> C[OrderDraftを生成]
+    C --> D[INSERT orders]
+    D --> E[order_idを取得]
+    E --> F[INSERT order_items]
+    F --> G[COMMIT]
+    G --> H[303 Redirect]
+    H --> I[/orders/complete?order_id=...]
 ```
 
-`db.insert_order()` では `conn.transaction()` を使用しているため、注文本体と明細を一体として扱います。
+`db.insert_order()` では、
 
-登録成功後は、
+1. `orders` に注文を登録
+2. `RETURNING id` で注文IDを取得
+3. `order_items` に各明細を登録
+4. すべて成功したらコミット
+
+という流れで処理します。
+
+途中でエラーが発生した場合はトランザクション全体がロールバックされます。
+
+したがって、
 
 ```text
-/orders/complete?order_id={order_id}
+orders
 ```
 
-へHTTP 303でリダイレクトします。
+だけ登録されて、
+
+```text
+order_items
+```
+
+が登録されない状態を避ける設計になっています。
 
 ---
 
-### GET `/orders`
+## 6.4 GET `/orders`
 
 注文履歴を表示します。
 
-`db.fetch_orders()` によって、
+```http
+GET /orders
+```
+
+注文ごとに、
 
 - 注文ID
 - 注文日
 - 会社名
-- 注文合計金額
+- 合計金額
 
-を取得し、`order_history.html` に渡します。
+を取得します。
+
+合計金額は、以下の関係からSQLで計算しています。
+
+```text
+bento.price × order_items.quantity
+```
+
+複数の明細がある場合は `SUM()` で合計します。
 
 注文は、
 
-1. `order_date` の降順
-2. `id` の降順
+```text
+注文日 DESC
+注文ID DESC
+```
 
-で並びます。
+の順で表示されます。
 
 ---
 
-### GET `/orders/complete`
+## 6.5 GET `/orders/complete`
 
-注文完了・注文詳細画面を表示します。
+注文登録後の注文完了画面、および個別注文の詳細を表示します。
 
-クエリパラメータとして、
-
-```text
-order_id
+```http
+GET /orders/complete?order_id=1
 ```
 
-を受け取ります。
+注文IDに対応する、
 
-例えば、
-
-```text
-/orders/complete?order_id=1
-```
-
-です。
-
-指定された注文が存在しない場合はHTTP 404を返します。
-
-存在する場合は、
-
-- `order`: 注文概要
-- `items`: 注文明細一覧
-
-を `order_complete.html` に渡します。
-
----
-
-## 7. 入力値の検証
-
-フォームから受け取った値は、そのままDBへ渡すのではなく、FastAPI側で変換・検証します。
-
-### 必須整数
-
-`company_id` などは整数として解釈されます。
-
-値が存在しない場合：
-
-```text
-400 Bad Request
-{field_name} is required
-```
-
-整数として解釈できない場合：
-
-```text
-400 Bad Request
-{field_name} must be an integer
-```
-
-となります。
-
-### 注文数量
-
-`quantity_*` の値は整数として解釈され、正の数量だけが注文データに含まれます。
-
-1つも正の数量が存在しない場合：
-
-```text
-400 Bad Request
-At least one bento quantity must be greater than zero
-```
-
-となります。
-
----
-
-## 8. 金額表示
-
-Jinja2に `yen` フィルタを登録しています。
-
-```python
-def format_yen(value: int) -> str:
-    return f"{int(value):,}円"
-```
-
-そのため、テンプレートでは金額を日本円形式で表示できます。
-
-例えば、
-
-```text
-800
-```
-
-は、
-
-```text
-800円
-```
-
-として表示できます。
-
----
-
-## 9. 注文履歴の取得
-
-注文履歴では、`orders`、`companies`、`order_items`、`bento` をJOINします。
-
-注文ごとの合計金額は、
-
-```text
-弁当価格 × 数量
-```
-
-を明細ごとに計算し、それを注文単位で集計しています。
-
-```mermaid
-flowchart LR
-    O[orders]
-    C[companies]
-    I[order_items]
-    B[bento]
-
-    O -->|company_id| C
-    O -->|order_id| I
-    I -->|bento_id| B
-
-    B --> X[price]
-    I --> Y[quantity]
-    X --> Z[price × quantity]
-    Y --> Z
-    Z --> S[SUM = total_price]
-```
-
-注文詳細では、さらに各明細について、
-
+- 注文ID
+- 注文日
+- 会社名
+- 合計金額
 - 弁当名
 - 数量
 - 単価
@@ -510,60 +529,91 @@ flowchart LR
 
 を取得します。
 
+存在しない注文IDが指定された場合は `404 Not Found` を返します。
+
 ---
 
-## 10. アプリケーションの責務
+# 7. 注文履歴のデータ取得
 
-現在のコードは、おおむね次のように役割分担されています。
+注文履歴では、`orders`、`companies`、`order_items`、`bento` をJOINして注文情報を取得します。
+
+概念的には次のような関係です。
 
 ```mermaid
-flowchart TD
-    R[HTTP Request]
-    M[main.py]
-    S[schemas.py]
-    D[db.py]
-    P[(PostgreSQL)]
-    T[Jinja2 Templates]
-
-    R --> M
-    M --> S
-    M --> D
-    D --> P
-    M --> T
-    T --> R
+flowchart LR
+    C[companies] --> O[orders]
+    O --> OI[order_items]
+    B[bento] --> OI
 ```
 
-### `main.py`
+注文の合計金額は、
 
-FastAPIのWeb層です。
+```sql
+SUM(b.price * oi.quantity)
+```
 
-担当する内容：
+によって計算します。
 
-- HTTPエンドポイント
-- フォーム入力の解析
-- 入力値の検証
-- DB関数の呼び出し
-- テンプレートへのデータ受け渡し
-- リダイレクト
-- 404 / 400エラーの返却
+注文詳細では、明細ごとに、
 
-### `schemas.py`
+```sql
+b.price * oi.quantity
+```
 
-アプリケーションで扱うデータモデルを定義します。
-
-Pydanticの `BaseModel` を利用し、モデルを `frozen=True` としています。
-
-### `db.py`
-
-PostgreSQLへのアクセスを担当します。
-
-SQLを明示的に記述し、取得した行をPydanticモデルへ変換します。
+を小計として取得します。
 
 ---
 
-## 11. 起動
+# 8. HTMLとDBの対応
 
-依存関係の同期：
+注文登録画面では、HTMLのフォーム項目とデータベースの列を次のように対応させています。
+
+| HTML | Python | PostgreSQL |
+|---|---|---|
+| 会社選択 | `company_id` | `companies.id` |
+| 注文日 | `order_date` | `orders.order_date` |
+| 弁当 | `bento.id` | `bento.id` |
+| 弁当名 | `bento.name` | `bento.name` |
+| 価格 | `bento.price` | `bento.price` |
+| 数量 | `quantity_{bento.id}` | `order_items.quantity` |
+| 注文 | `POST /orders` | `orders` |
+| 注文明細 | `POST /orders` | `order_items` |
+
+アレルギーについては、現在の画面・Python処理では未使用ですが、データベースには、
+
+```text
+allergens
+bento_allergens
+```
+
+を含むスキーマを保持しています。
+
+---
+
+# 9. データベースアクセス
+
+`app/db.py` がPostgreSQLへのアクセスを担当します。
+
+主な関数：
+
+| Function | 内容 |
+|---|---|
+| `get_connection()` | PostgreSQLへの接続を作成 |
+| `fetch_companies()` | 会社一覧を取得 |
+| `fetch_bentos()` | 弁当一覧を取得 |
+| `fetch_orders()` | 注文履歴を取得 |
+| `fetch_order(order_id)` | 注文と明細を取得 |
+| `insert_order(draft)` | 注文と明細を登録 |
+
+ORMは使用せず、SQLを明示的に記述しています。
+
+データベースから取得した行は、`Company`、`Bento`、`OrderSummary`、`OrderItem` などのPydanticモデルへ変換します。
+
+---
+
+# 10. 起動
+
+依存関係を同期：
 
 ```bash
 uv sync
@@ -581,126 +631,140 @@ uv run uvicorn app.main:app --reload
 http://127.0.0.1:8000/
 ```
 
-FastAPIのドキュメント：
+Swagger UI：
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
-PostgreSQL接続先を変更する場合は、`DATABASE_URL` を設定します。
-
-例：
-
-```bash
-export DATABASE_URL="dbname=demo_db"
-```
+なお、このアプリケーションの主要な画面はHTML/Jinja2による画面であり、Swagger UIはFastAPIが提供するAPIドキュメントです。
 
 ---
 
-## 12. 現在の処理フロー
+# 11. 現在のアプリケーション構成
 
-注文登録から完了画面までの流れは次のとおりです。
+現在の実装は、概ね次の構造になっています。
 
 ```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant F as FastAPI
-    participant D as db.py
-    participant P as PostgreSQL
+flowchart TD
+    UI[Browser / Jinja2 HTML]
+    API[FastAPI main.py]
+    MODEL[Pydantic schemas.py]
+    DBLAYER[PostgreSQL access db.py]
+    DB[(PostgreSQL)]
 
-    B->>F: POST /orders
-    F->>F: Parse & validate form
-    F->>D: insert_order(OrderDraft)
-    D->>P: INSERT orders
-    P-->>D: order_id
-    D->>P: INSERT order_items
-    P-->>D: Success
-    D-->>F: order_id
-    F-->>B: 303 Redirect
-    B->>F: GET /orders/complete?order_id=...
-    F->>D: fetch_order(order_id)
-    D->>P: SELECT order summary
-    D->>P: SELECT order items
-    P-->>D: Data
-    D-->>F: OrderSummary + OrderItem[]
-    F-->>B: HTML
+    UI -->|GET /| API
+    UI -->|POST /orders| API
+    UI -->|GET /orders| API
+    UI -->|GET /orders/complete| API
+
+    API --> MODEL
+    API --> DBLAYER
+    DBLAYER --> DB
 ```
+
+役割は次のように分かれています。
+
+- `main.py`
+  - HTTPリクエストを受け取る
+  - フォームを解析する
+  - Pydanticモデルを生成する
+  - DB操作を呼び出す
+  - Jinja2テンプレートを返す
+- `schemas.py`
+  - アプリケーションで扱うデータモデルを定義する
+  - Pydanticによる値の制約を定義する
+- `db.py`
+  - PostgreSQLへの接続を行う
+  - SQLを実行する
+  - DBの行をPydanticモデルへ変換する
 
 ---
 
-## 13. 設計上の方針
+# 12. 設計上の方針
 
 このデモでは、まず**理解しやすさを優先**します。
 
 - ORMは使用しない
 - SQLを明示的に記述する
-- PostgreSQLをデータストアとして利用する
-- Pydanticモデルでアプリケーションデータを表現する
-- データモデルは `frozen=True` として不変に扱う
+- PostgreSQLの外部キーを利用する
+- 多対多は中間テーブルで表現する
 - 注文登録はトランザクションで処理する
-- フロントエンドはサーバーサイドレンダリングのHTMLとする
+- HTML/Jinja2を中心としたシンプルなフロントエンドにする
 - 必要以上にフレームワークを導入しない
+- Python側のデータモデルはイミュータブルに扱う
 
-特に、`db.py` と `main.py` の責務を分けることで、
-
-```text
-HTTP / Form
-    ↓
-main.py
-    ↓
-schemas.py
-    ↓
-db.py
-    ↓
-PostgreSQL
-```
-
-という比較的追いやすい構造にしています。
+特に注文登録では、`OrderDraft` や `QuantitySelection` などのモデルを介して、フォームから受け取ったデータを明示的なデータ構造に変換してからDBへ渡します。
 
 ---
 
-## 14. 今後の拡張候補
+# 13. 現在実装されている機能
 
-現在のPythonコードから見ると、すでに以下は実装済みです。
+現在のPythonコードから確認できる範囲では、以下が実装済みです。
 
-- 注文登録
-- 注文登録完了画面
-- 注文履歴
-- 注文詳細
-- 注文合計金額の計算
-- 入力値の基本的な検証
-- DBトランザクション
+- 会社一覧の取得
+- 弁当一覧の取得
+- 弁当価格の表示
+- 会社・注文日・弁当数量を指定した注文登録
+- 注文と注文明細のトランザクション処理
+- 注文履歴の表示
+- 注文ごとの合計金額の計算
+- 個別注文の完了・詳細画面
+- 存在しない注文への404応答
+- 金額の「円」形式での表示
 
-今後の候補としては、例えば以下が考えられます。
+一方、以下はデータベーススキーマには存在しますが、現在のPythonコードではまだ利用していません。
 
-1. テストの追加・拡充
+- `companies.contact_name`
+- `companies.email`
+- `companies.phone`
+- `allergens`
+- `bento_allergens`
+- 弁当のアレルギー情報表示
+
+---
+
+# 14. 今後の拡張候補
+
+現在すでに注文登録・注文履歴・注文詳細まで実装されているため、今後の拡張候補は次のようになります。
+
+1. 弁当のアレルギー情報を画面に表示
 2. HTML/CSSの改善
 3. JavaScriptによる入力支援
-4. アレルギー情報の実装
-5. Repository層のさらなる分離
-6. DBスキーマ・マイグレーション管理
+4. 入力値・存在する会社や弁当IDなどのバリデーション強化
+5. テストの追加・拡充
+6. Repository層などへの責務分離
 7. Docker化
-8. デプロイ
+8. デプロイ環境への対応
 
-ただし、これらは**現在のPythonコードから確認できる実装ではなく、今後の拡張候補**です。
+特に `allergens` / `bento_allergens` は、スキーマとしてすでに存在するため、注文画面や注文詳細画面へのアレルギー情報表示を追加することで、RDBの多対多関係をより具体的に示せます。
 
 ---
 
-## 15. このデモの目的
+## 15. 最終的な目的
 
-最終的な目的は、高機能なWebアプリを作ることではありません。
+このデモの目的は、高機能なWebアプリケーションを作ることではありません。
 
-> **「業務上のデータをRDBでどのように表現し、それをFastAPIからどのように扱うか」を説明できる小さな実例を作ること**
+**「業務上のデータをRDBでどのように表現し、それをFastAPIからどのように扱うか」**
 
-を目的としています。
+を、小さく分かりやすい実例として説明できるようにすることを目的としています。
 
 特に、
 
-- RDBのテーブル間の関係
-- SQLによるJOIN・集計
-- Webフォームからのデータ登録
-- トランザクション
-- Pydanticによるデータモデル
-- FastAPIとテンプレートによるWeb画面
+```mermaid
+flowchart LR
+    A[業務上の概念]
+    B[RDBのテーブル]
+    C[SQL]
+    D[Pydanticモデル]
+    E[FastAPI]
+    F[HTML]
 
-を一つの小さなアプリケーションで確認できることを重視しています。
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+```
+
+という流れを一つのアプリケーションで確認できることを重視しています。
