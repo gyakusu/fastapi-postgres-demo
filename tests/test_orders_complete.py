@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -124,6 +126,37 @@ def test_order_history_page_renders(monkeypatch):
     assert "注文履歴" in response.text
     assert "株式会社ABC" in response.text
     assert "12,000円" in response.text
+
+
+def test_order_history_page_handles_date_objects_from_db(monkeypatch):
+    class DateObjectHistoryConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params
+
+        def fetchall(self):
+            return [
+                (1, date(2026, 8, 29), "株式会社ABC", 12000),
+                (2, date(2026, 8, 30), "株式会社XYZ", 4500),
+            ]
+
+    monkeypatch.setattr("app.main.get_connection", lambda: DateObjectHistoryConnection())
+
+    client = TestClient(app)
+    response = client.get("/orders")
+
+    assert response.status_code == 200
+    assert "2026-08-29" in response.text
+    assert "株式会社ABC" in response.text
 
 
 def test_immutable_models_are_frozen():

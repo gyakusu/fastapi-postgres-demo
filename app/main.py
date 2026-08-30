@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 from app.db import get_connection
 from app.schemas import (
     Bento,
@@ -25,6 +27,12 @@ templates.env.filters["yen"] = format_yen
 
 
 # DB queries
+def normalize_order_date(value):
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
 def fetch_companies() -> list[Company]:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -88,7 +96,7 @@ def fetch_orders() -> list[OrderSummary]:
         OrderSummary.model_validate(
             {
                 "id": row[0],
-                "order_date": row[1],
+                "order_date": normalize_order_date(row[1]),
                 "company_name": row[2],
                 "total_price": row[3],
             }
@@ -127,7 +135,7 @@ def fetch_order(order_id: int) -> tuple[OrderSummary | None, list[OrderItem]]:
             order = OrderSummary.model_validate(
                 {
                     "id": order_row[0],
-                    "order_date": order_row[1],
+                    "order_date": normalize_order_date(order_row[1]),
                     "company_name": order_row[2],
                     "total_price": order_row[3],
                 }
