@@ -13,6 +13,8 @@ dependencies = [
     "python-multipart>=0.0.32",
     "pytest>=8.3.5",
     "uvicorn>=0.52.4",
+    "ruff>=0.16.5",
+    "mypy>=2.3.1",
 ]
 
 [tool.pytest.ini_options]

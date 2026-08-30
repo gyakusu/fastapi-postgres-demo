@@ -53,10 +53,11 @@ def _required_str(value: Any, *, field_name: str) -> str:
 def parse_quantities(form: Mapping[str, Any]) -> tuple[QuantitySelection, ...]:
     """Extract positive quantity_* fields from a submitted form."""
     quantities = tuple(
-        QuantitySelection(bento_id=bento_id, quantity=quantity)
+        selection
         for key, value in form.items()
         if key.startswith("quantity_")
-        for bento_id, quantity in _try_parse_quantity(key, value)
+        for selection in (_try_parse_quantity(key, value),)
+        if selection is not None
     )
 
     if not quantities:
@@ -71,22 +72,24 @@ def parse_quantities(form: Mapping[str, Any]) -> tuple[QuantitySelection, ...]:
 def _try_parse_quantity(
     key: str,
     value: Any,
-) -> tuple[int, int] | tuple[()]:
+) -> QuantitySelection | None:
     try:
         bento_id = int(key.removeprefix("quantity_"))
         quantity = int(value)
     except (TypeError, ValueError):
-        return ()
+        return None
 
-    return ((bento_id, quantity),) if quantity > 0 else ()
+    return (
+        QuantitySelection(bento_id=bento_id, quantity=quantity)
+        if quantity > 0
+        else None
+    )
 
 
 def _parse_order_draft(form: Mapping[str, Any]) -> OrderDraft:
     return OrderDraft(
-        company_id=_required_int(
-            form.get("company_id"), field_name="company_id"),
-        order_date=_required_str(
-            form.get("order_date"), field_name="order_date"),
+        company_id=_required_int(form.get("company_id"), field_name="company_id"),
+        order_date=_required_str(form.get("order_date"), field_name="order_date"),
         quantities=parse_quantities(form),
     )
 

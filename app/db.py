@@ -164,7 +164,10 @@ def insert_order(draft: OrderDraft) -> int:
             """,
             (draft.company_id, draft.order_date),
         )
-        order_id = cur.fetchone()[0]
+        order_row = cur.fetchone()
+        if order_row is None:
+            raise RuntimeError("INSERT ... RETURNING id returned no row")
+        order_id = order_row[0]
 
         cur.executemany(
             """
