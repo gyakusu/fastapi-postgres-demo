@@ -1,261 +1,63 @@
-from datetime import date, datetime
+"""FastAPI web layer for the bento ordering application."""
 
-from app.db import get_connection
-from app.schemas import (
-    Bento,
-    Company,
-    OrderDraft,
-    OrderItem,
-    OrderSummary,
-    QuantitySelection,
-)
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+
+from app import db
+from app.schemas import OrderDraft, QuantitySelection
 
 app = FastAPI()
 
 templates = Jinja2Templates(directory="app/templates")
 
 
-# Template helpers
-def format_yen(value) -> str:
+def format_yen(value: int) -> str:
+    """Format an integer as Japanese yen."""
     return f"{int(value):,}円"
 
 
 templates.env.filters["yen"] = format_yen
 
 
-# DB queries
-def normalize_order_date(value):
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    return value
-
-
-def fetch_companies() -> list[Company]:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name
-                FROM companies
-                ORDER BY name
-                """
-            )
-            rows = cur.fetchall()
-
-    return [
-        Company.model_validate({"id": row[0], "name": row[1]})
-        for row in rows
-    ]
-
-
-def fetch_bentos() -> list[Bento]:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, price
-                FROM bento
-                ORDER BY id
-                """
-            )
-            rows = cur.fetchall()
-
-    return [
-        Bento.model_validate({"id": row[0], "name": row[1], "price": row[2]})
-        for row in rows
-    ]
-
-
-def fetch_orders() -> list[OrderSummary]:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    o.id,
-                    o.order_date,
-                    c.name AS company_name,
-                    COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
-                FROM orders o
-                JOIN companies c
-                    ON c.id = o.company_id
-                LEFT JOIN order_items oi
-                    ON oi.order_id = o.id
-                LEFT JOIN bento b
-                    ON b.id = oi.bento_id
-                GROUP BY o.id, o.order_date, c.name
-                ORDER BY o.order_date DESC, o.id DESC
-                """
-            )
-            rows = cur.fetchall()
-
-    return [
-        OrderSummary.model_validate(
-            {
-                "id": row[0],
-                "order_date": normalize_order_date(row[1]),
-                "company_name": row[2],
-                "total_price": row[3],
-            }
-        )
-        for row in rows
-    ]
-
-
-def fetch_order(order_id: int) -> tuple[OrderSummary | None, list[OrderItem]]:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    o.id,
-                    o.order_date,
-                    c.name AS company_name,
-                    COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
-                FROM orders o
-                JOIN companies c
-                    ON c.id = o.company_id
-                LEFT JOIN order_items oi
-                    ON oi.order_id = o.id
-                LEFT JOIN bento b
-                    ON b.id = oi.bento_id
-                WHERE o.id = %s
-                GROUP BY o.id, o.order_date, c.name
-                """,
-                (order_id,),
-            )
-            order_row = cur.fetchone()
-
-            if order_row is None:
-                return None, []
-
-            order = OrderSummary.model_validate(
-                {
-                    "id": order_row[0],
-                    "order_date": normalize_order_date(order_row[1]),
-                    "company_name": order_row[2],
-                    "total_price": order_row[3],
-                }
-            )
-
-            cur.execute(
-                """
-                SELECT
-                    b.name,
-                    oi.quantity,
-                    b.price,
-                    b.price * oi.quantity AS subtotal
-                FROM order_items oi
-                JOIN bento b
-                    ON b.id = oi.bento_id
-                WHERE oi.order_id = %s
-                ORDER BY b.id
-                """,
-                (order_id,),
-            )
-            item_rows = cur.fetchall()
-
-    items = [
-        OrderItem.model_validate(
-            {
-                "name": row[0],
-                "quantity": row[1],
-                "price": row[2],
-                "subtotal": row[3],
-            }
-        )
-        for row in item_rows
-    ]
-
-    return order, items
-
-
-def insert_order(
-    company_id: int,
-    order_date: str,
-    quantities: tuple[QuantitySelection, ...],
-) -> int:
-    draft = OrderDraft(
-        company_id=company_id,
-        order_date=order_date,
-        quantities=quantities,
-    )
-
-    with get_connection() as conn:
-        with conn.transaction():
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO orders (
-                        company_id,
-                        order_date,
-                        created_at
-                    )
-                    VALUES (%s, %s, NOW())
-                    RETURNING id
-                    """,
-                    (draft.company_id, draft.order_date),
-                )
-                order_id = cur.fetchone()[0]
-
-                cur.executemany(
-                    """
-                    INSERT INTO order_items (
-                        order_id,
-                        bento_id,
-                        quantity
-                    )
-                    VALUES (%s, %s, %s)
-                    """,
-                    [
-                        (order_id, item.bento_id, item.quantity)
-                        for item in draft.quantities
-                    ],
-                )
-
-    return order_id
-
-
-# Form parsing
-def parse_company_id(value) -> int:
+def _required_int(value: Any, *, field_name: str) -> int:
     if value is None:
         raise HTTPException(
             status_code=400,
-            detail="company_id is required",
+            detail=f"{field_name} is required",
         )
 
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=400,
-            detail="company_id must be an integer",
+            detail=f"{field_name} must be an integer",
+        ) from exc
+
+
+def _required_str(value: Any, *, field_name: str) -> str:
+    if value is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} is required",
         )
+    return str(value)
 
 
-def parse_quantities(form) -> tuple[QuantitySelection, ...]:
-    quantities: list[QuantitySelection] = []
-
-    for key, value in form.items():
-        if not key.startswith("quantity_"):
-            continue
-
-        try:
-            bento_id = int(key.removeprefix("quantity_"))
-            quantity = int(value)
-        except (TypeError, ValueError):
-            continue
-
-        if quantity > 0:
-            quantities.append(
-                QuantitySelection(
-                    bento_id=bento_id,
-                    quantity=quantity,
-                )
-            )
+def parse_quantities(form: Mapping[str, Any]) -> tuple[QuantitySelection, ...]:
+    """Extract positive quantity_* fields from a submitted form."""
+    quantities = tuple(
+        QuantitySelection(bento_id=bento_id, quantity=quantity)
+        for key, value in form.items()
+        if key.startswith("quantity_")
+        for bento_id, quantity in _try_parse_quantity(key, value)
+    )
 
     if not quantities:
         raise HTTPException(
@@ -263,54 +65,46 @@ def parse_quantities(form) -> tuple[QuantitySelection, ...]:
             detail="At least one bento quantity must be greater than zero",
         )
 
-    return tuple(quantities)
+    return quantities
 
 
-# Row conversion
-def order_row_to_dict(row: OrderSummary) -> dict:
-    return row.model_dump()
+def _try_parse_quantity(
+    key: str,
+    value: Any,
+) -> tuple[int, int] | tuple[()]:
+    try:
+        bento_id = int(key.removeprefix("quantity_"))
+        quantity = int(value)
+    except (TypeError, ValueError):
+        return ()
+
+    return ((bento_id, quantity),) if quantity > 0 else ()
 
 
-def item_row_to_dict(row: OrderItem) -> dict:
-    return row.model_dump()
+def _parse_order_draft(form: Mapping[str, Any]) -> OrderDraft:
+    return OrderDraft(
+        company_id=_required_int(
+            form.get("company_id"), field_name="company_id"),
+        order_date=_required_str(
+            form.get("order_date"), field_name="order_date"),
+        quantities=parse_quantities(form),
+    )
 
 
-# Routes
 @app.get("/")
 def index(request: Request):
-    companies = fetch_companies()
-    bentos = fetch_bentos()
-
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "companies": companies,
-            "bentos": bentos,
-        },
-    )
+    context = {
+        "companies": db.fetch_companies(),
+        "bentos": db.fetch_bentos(),
+    }
+    return templates.TemplateResponse(request, "index.html", context)
 
 
 @app.post("/orders")
 async def create_order(request: Request):
     form = await request.form()
-
-    company_id = parse_company_id(form.get("company_id"))
-    order_date = form.get("order_date")
-
-    if order_date is None:
-        raise HTTPException(
-            status_code=400,
-            detail="order_date is required",
-        )
-
-    quantities = parse_quantities(form)
-
-    order_id = insert_order(
-        company_id=company_id,
-        order_date=str(order_date),
-        quantities=quantities,
-    )
+    draft = _parse_order_draft(form)
+    order_id = db.insert_order(draft)
 
     return RedirectResponse(
         url=f"/orders/complete?order_id={order_id}",
@@ -320,42 +114,25 @@ async def create_order(request: Request):
 
 @app.get("/orders")
 def order_history(request: Request):
-    orders = [
-        order_row_to_dict(row)
-        for row in fetch_orders()
-    ]
-
     return templates.TemplateResponse(
         request,
         "order_history.html",
-        {
-            "orders": orders,
-        },
+        {"orders": db.fetch_orders()},
     )
 
 
 @app.get("/orders/complete")
 def order_complete(request: Request, order_id: int):
-    order, items = fetch_order(order_id)
+    order, items = db.fetch_order(order_id)
 
     if order is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Order not found",
-        )
-
-    order_data = order_row_to_dict(order)
-
-    item_rows = [
-        item_row_to_dict(item)
-        for item in items
-    ]
+        raise HTTPException(status_code=404, detail="Order not found")
 
     return templates.TemplateResponse(
         request,
         "order_complete.html",
         {
-            "order": order_data,
-            "items": item_rows,
+            "order": order,
+            "items": items,
         },
     )
