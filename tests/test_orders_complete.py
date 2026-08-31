@@ -72,6 +72,12 @@ def test_homepage_renders_company_and_bento_lists(monkeypatch):
         def fetchall(self):
             if "FROM companies" in self.sql:
                 return [(1, "株式会社ABC"), (2, "株式会社XYZ")]
+            if "FROM bento b" in self.sql:
+                return [
+                    ("唐揚げ弁当", "小麦"),
+                    ("唐揚げ弁当", "卵"),
+                    ("鮭弁当", None),
+                ]
             if "FROM bento" in self.sql:
                 return [(1, "唐揚げ弁当", 800), (2, "鮭弁当", 850)]
             return []
@@ -89,6 +95,7 @@ def test_homepage_renders_company_and_bento_lists(monkeypatch):
     assert "株式会社XYZ" in response.text
     assert "唐揚げ弁当" in response.text
     assert "鮭弁当" in response.text
+    assert "小麦, 卵" in response.text
 
 
 def test_order_complete_page_renders(monkeypatch):

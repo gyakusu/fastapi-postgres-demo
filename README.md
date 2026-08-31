@@ -98,7 +98,6 @@ erDiagram
         varchar email
         varchar phone
     }
-
     orders {
         bigint id PK
         bigint company_id FK
@@ -122,7 +121,6 @@ erDiagram
         bigint id PK
         varchar name
     }
-
     bento_allergens {
         bigint bento_id PK,FK
         bigint allergen_id PK,FK
@@ -150,7 +148,6 @@ ORDER BY name;
 ```
 
 `contact_name`、`email`、`phone` はスキーマとして保持されていますが、現在の注文処理では使用していません。
-
 ---
 
 ### 4.2 `orders`
@@ -248,9 +245,7 @@ flowchart LR
 | `id` | BIGSERIAL | PK | アレルギーID |
 | `name` | VARCHAR(100) | NOT NULL, UNIQUE | アレルギー名 |
 
-このテーブルは現在のPythonコードでは直接利用していません。
-
-ただし、データベース上のスキーマとして存在するため、将来的なアレルギー情報表示を想定して残しています。
+注文画面の食品アレルギー表で、弁当に含まれるアレルゲンの表示に利用しています。
 
 ---
 
@@ -281,7 +276,7 @@ flowchart LR
   └── 大豆
 ```
 
-現在のPythonコードではまだ利用していません。
+注文画面の食品アレルギー表で、弁当とアレルギーの関係を取得するために利用しています。
 
 ---
 
@@ -601,6 +596,7 @@ bento_allergens
 | `get_connection()` | PostgreSQLへの接続を作成 |
 | `fetch_companies()` | 会社一覧を取得 |
 | `fetch_bentos()` | 弁当一覧を取得 |
+| `fetch_bento_allergens()` | 弁当ごとのアレルゲン一覧を取得 |
 | `fetch_orders()` | 注文履歴を取得 |
 | `fetch_order(order_id)` | 注文と明細を取得 |
 | `insert_order(draft)` | 注文と明細を登録 |
@@ -705,6 +701,7 @@ flowchart TD
 - 会社一覧の取得
 - 弁当一覧の取得
 - 弁当価格の表示
+- メイン画面から開く食品アレルギー表
 - 会社・注文日・弁当数量を指定した注文登録
 - 注文と注文明細のトランザクション処理
 - 注文履歴の表示
@@ -713,14 +710,11 @@ flowchart TD
 - 存在しない注文への404応答
 - 金額の「円」形式での表示
 
-一方、以下はデータベーススキーマには存在しますが、現在のPythonコードではまだ利用していません。
+一方、以下はデータベーススキーマには存在しますが、現在の注文処理では使用していません。
 
 - `companies.contact_name`
 - `companies.email`
 - `companies.phone`
-- `allergens`
-- `bento_allergens`
-- 弁当のアレルギー情報表示
 
 ---
 
@@ -728,16 +722,15 @@ flowchart TD
 
 現在すでに注文登録・注文履歴・注文詳細まで実装されているため、今後の拡張候補は次のようになります。
 
-1. 弁当のアレルギー情報を画面に表示
-2. HTML/CSSの改善
-3. JavaScriptによる入力支援
-4. 入力値・存在する会社や弁当IDなどのバリデーション強化
-5. テストの追加・拡充
-6. Repository層などへの責務分離
-7. Docker化
-8. デプロイ環境への対応
+1. HTML/CSSの改善
+2. JavaScriptによる入力支援
+3. 入力値・存在する会社や弁当IDなどのバリデーション強化
+4. テストの追加・拡充
+5. Repository層などへの責務分離
+6. Docker化
+7. デプロイ環境への対応
 
-特に `allergens` / `bento_allergens` は、スキーマとしてすでに存在するため、注文画面や注文詳細画面へのアレルギー情報表示を追加することで、RDBの多対多関係をより具体的に示せます。
+特に `allergens` / `bento_allergens` は、注文画面の食品アレルギー表で利用しており、RDBの多対多関係を具体的に確認できます。
 
 ---
 

@@ -20,6 +20,13 @@ class Bento(BaseModel):
     price: int = Field(ge=0)
 
 
+class BentoAllergenInfo(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    bento_name: str
+    allergens: tuple[str, ...]
+
+
 class OrderSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 

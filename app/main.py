@@ -88,8 +88,10 @@ def _try_parse_quantity(
 
 def _parse_order_draft(form: Mapping[str, Any]) -> OrderDraft:
     return OrderDraft(
-        company_id=_required_int(form.get("company_id"), field_name="company_id"),
-        order_date=_required_str(form.get("order_date"), field_name="order_date"),
+        company_id=_required_int(
+            form.get("company_id"), field_name="company_id"),
+        order_date=_required_str(
+            form.get("order_date"), field_name="order_date"),
         quantities=parse_quantities(form),
     )
 
@@ -99,6 +101,7 @@ def index(request: Request):
     context = {
         "companies": db.fetch_companies(),
         "bentos": db.fetch_bentos(),
+        "bento_allergens": db.fetch_bento_allergens(),
     }
     return templates.TemplateResponse(request, "index.html", context)
 

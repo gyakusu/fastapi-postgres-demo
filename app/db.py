@@ -8,7 +8,14 @@ from typing import Any
 
 import psycopg
 
-from app.schemas import Bento, Company, OrderDraft, OrderItem, OrderSummary
+from app.schemas import (
+    Bento,
+    BentoAllergenInfo,
+    Company,
+    OrderDraft,
+    OrderItem,
+    OrderSummary,
+)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "dbname=demo_db")
 
@@ -95,6 +102,36 @@ def fetch_bentos() -> list[Bento]:
         rows = cur.fetchall()
 
     return [_bento_from_row(row) for row in rows]
+
+
+def fetch_bento_allergens() -> list[BentoAllergenInfo]:
+    """Return every bento with its associated allergens."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                b.name,
+                a.name
+            FROM bento b
+            LEFT JOIN bento_allergens ba
+                ON ba.bento_id = b.id
+            LEFT JOIN allergens a
+                ON a.id = ba.allergen_id
+            ORDER BY b.id, a.name
+            """
+        )
+        rows = cur.fetchall()
+
+    grouped: dict[str, list[str]] = {}
+    for bento_name, allergen_name in rows:
+        grouped.setdefault(bento_name, [])
+        if allergen_name is not None:
+            grouped[bento_name].append(allergen_name)
+
+    return [
+        BentoAllergenInfo(bento_name=name, allergens=tuple(allergens))
+        for name, allergens in grouped.items()
+    ]
 
 
 def fetch_orders() -> list[OrderSummary]:
