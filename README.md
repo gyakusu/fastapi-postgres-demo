@@ -430,14 +430,14 @@ FastAPI側では、`quantity_` を取り除いた文字列を整数に変換し�
 
 ```mermaid
 flowchart TD
-    A[POST /orders] --> B[フォームを解析]
-    B --> C[OrderDraftを生成]
-    C --> D[INSERT orders]
-    D --> E[order_idを取得]
-    E --> F[INSERT order_items]
-    F --> G[COMMIT]
-    G --> H[303 Redirect]
-    H --> I[/orders/complete?order_id=...]
+    A["POST /orders"] --> B["フォームを解析"]
+    B --> C["OrderDraftを生成"]
+    C --> D["INSERT orders"]
+    D --> E["order_idを取得"]
+    E --> F["INSERT order_items"]
+    F --> G["COMMIT"]
+    G --> H["303 Redirect"]
+    H --> I["/orders/complete?order_id=..."]
 ```
 
 `db.insert_order()` では、
