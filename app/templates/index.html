@@ -74,8 +74,28 @@
         font-size: 1rem;
       }
 
-      .allergen-button {
+      .header-actions {
         flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .directory-link {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--text);
+        padding: 11px 15px;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .directory-link:hover {
+        background: #fff4db;
+      }
+
+      .allergen-button {
         border: 1px solid rgba(125, 187, 116, 0.45);
         border-radius: 12px;
         background: #f5fbf1;
@@ -448,9 +468,12 @@
             会社名・注文日・数量を入力して、注文内容をまとめて登録できます。
           </p>
         </div>
-        <button type="button" class="allergen-button" id="allergen-open">
-          食品アレルギー表
-        </button>
+        <div class="header-actions">
+          <a class="directory-link" href="/companies">取引先一覧</a>
+          <button type="button" class="allergen-button" id="allergen-open">
+            食品アレルギー表
+          </button>
+        </div>
       </header>
 
       <div class="layout">

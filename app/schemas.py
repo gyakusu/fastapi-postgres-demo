@@ -12,6 +12,19 @@ class Company(BaseModel):
     name: str
 
 
+class CompanyContact(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    name: str
+    contact_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    order_count: int = Field(ge=0)
+    last_order_date: str | None = None
+    total_price: int = Field(ge=0)
+
+
 class Bento(BaseModel):
     model_config = ConfigDict(frozen=True)
 

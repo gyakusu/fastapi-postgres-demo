@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from app import db
 from app.main import app, format_yen, parse_quantities
-from app.schemas import Company, OrderSummary
+from app.schemas import Company, CompanyContact, OrderSummary
 
 
 class FakeCursor:
@@ -96,6 +96,40 @@ def test_homepage_renders_company_and_bento_lists(monkeypatch):
     assert "唐揚げ弁当" in response.text
     assert "鮭弁当" in response.text
     assert "小麦, 卵" in response.text
+
+
+def test_company_directory_page_renders_contact_details(monkeypatch):
+    cursor = FakeCursor(
+        fetchall_results=[[
+            (
+                1,
+                "株式会社ABC",
+                "山田 太郎",
+                "yamada@abc.example.jp",
+                "03-1234-5678",
+                2,
+                date(2026, 8, 29),
+                12000,
+            ),
+            (2, "株式会社XYZ", None, None, None, 0, None, 0),
+        ]],
+    )
+    monkeypatch.setattr(
+        db,
+        "get_connection",
+        lambda: FakeConnection(cursor),
+    )
+
+    response = TestClient(app).get("/companies")
+
+    assert response.status_code == 200
+    assert "取引先一覧" in response.text
+    assert "山田 太郎" in response.text
+    assert "yamada@abc.example.jp" in response.text
+    assert "03-1234-5678" in response.text
+    assert "2026-08-29" in response.text
+    assert "12,000円" in response.text
+    assert "未登録" in response.text
 
 
 def test_order_complete_page_renders(monkeypatch):
@@ -208,3 +242,17 @@ def test_immutable_models_are_frozen():
 
     with pytest.raises(ValidationError):
         order.total_price = 9999
+
+
+def test_company_contact_allows_missing_contact_columns():
+    contact = CompanyContact(
+        id=1,
+        name="株式会社ABC",
+        order_count=0,
+        total_price=0,
+    )
+
+    assert contact.contact_name is None
+    assert contact.email is None
+    assert contact.phone is None
+    assert contact.last_order_date is None

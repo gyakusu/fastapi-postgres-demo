@@ -12,6 +12,7 @@ from app.schemas import (
     Bento,
     BentoAllergenInfo,
     Company,
+    CompanyContact,
     OrderDraft,
     OrderItem,
     OrderSummary,
@@ -34,6 +35,19 @@ def _normalize_date(value: Any) -> str:
 
 def _company_from_row(row: tuple[Any, ...]) -> Company:
     return Company(id=row[0], name=row[1])
+
+
+def _company_contact_from_row(row: tuple[Any, ...]) -> CompanyContact:
+    return CompanyContact(
+        id=row[0],
+        name=row[1],
+        contact_name=row[2],
+        email=row[3],
+        phone=row[4],
+        order_count=int(row[5]),
+        last_order_date=None if row[6] is None else _normalize_date(row[6]),
+        total_price=int(row[7]),
+    )
 
 
 def _bento_from_row(row: tuple[Any, ...]) -> Bento:
@@ -87,6 +101,36 @@ def fetch_companies() -> list[Company]:
         rows = cur.fetchall()
 
     return [_company_from_row(row) for row in rows]
+
+
+def fetch_company_contacts() -> list[CompanyContact]:
+    """Return companies with their contact details and order statistics."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                c.id,
+                c.name,
+                c.contact_name,
+                c.email,
+                c.phone,
+                COUNT(DISTINCT o.id) AS order_count,
+                MAX(o.order_date) AS last_order_date,
+                COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
+            FROM companies c
+            LEFT JOIN orders o
+                ON o.company_id = c.id
+            LEFT JOIN order_items oi
+                ON oi.order_id = o.id
+            LEFT JOIN bento b
+                ON b.id = oi.bento_id
+            GROUP BY c.id, c.name, c.contact_name, c.email, c.phone
+            ORDER BY c.name
+            """
+        )
+        rows = cur.fetchall()
+
+    return [_company_contact_from_row(row) for row in rows]
 
 
 def fetch_bentos() -> list[Bento]:
