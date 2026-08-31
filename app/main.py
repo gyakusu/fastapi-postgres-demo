@@ -106,6 +106,15 @@ def index(request: Request):
     return templates.TemplateResponse(request, "index.html", context)
 
 
+@app.get("/companies")
+def company_directory(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "companies.html",
+        {"companies": db.fetch_company_contacts()},
+    )
+
+
 @app.post("/orders")
 async def create_order(request: Request):
     form = await request.form()

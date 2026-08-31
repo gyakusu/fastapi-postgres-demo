@@ -8,7 +8,7 @@
 
 **FastAPI + PostgreSQL + HTML/Jinja2** というシンプルな構成で、RDBにおける1対多・多対多の関係と、Webアプリケーションからのデータ登録・取得を確認することを目的とします。
 
-現在の実装では、**会社を選択して弁当を数量指定し、注文を登録する**ところまでを一連の画面として実装しています。また、登録した注文の履歴と、個別の注文完了画面も提供しています。
+現在の実装では、**会社を選択して弁当を数量指定し、注文を登録する**ところまでを一連の画面として実装しています。また、登録した注文の履歴と、個別の注文完了画面、注文元会社の連絡先を確認する取引先一覧画面も提供しています。
 
 > このデモの目的は、業務上のデータをどのようにRDBで表現し、FastAPIからSQLとPydanticモデルを通じて扱うかを、わかりやすい具体例として学ぶことです。会社・注文・弁当・アレルゲンの関係を、実際のWebフォームとデータベース処理を通じて確認できます。
 
@@ -74,6 +74,7 @@ fastapi-postgres-demo/
 │   ├── schemas.py
 │   └── templates/
 │       ├── index.html
+│       ├── companies.html
 │       ├── order_history.html
 │       └── order_complete.html
 ├── .venv/
@@ -145,7 +146,7 @@ erDiagram
 | `email` | VARCHAR(255) | | メールアドレス |
 | `phone` | VARCHAR(50) | | 電話番号 |
 
-現在のPythonコードでは、注文画面に表示するために `id` と `name` を取得しています。
+注文画面では、会社選択欄に表示するために `id` と `name` を取得しています。
 
 ```sql
 SELECT id, name
@@ -153,7 +154,33 @@ FROM companies
 ORDER BY name;
 ```
 
-`contact_name`、`email`、`phone` はスキーマとして保持されていますが、現在の注文処理では使用していません。
+取引先一覧画面（`GET /companies`）では、担当者・連絡先を含めて取得し、あわせて会社ごとの注文実績を集計します。
+
+```sql
+SELECT
+    c.id,
+    c.name,
+    c.contact_name,
+    c.email,
+    c.phone,
+    COUNT(DISTINCT o.id) AS order_count,
+    MAX(o.order_date) AS last_order_date,
+    COALESCE(SUM(b.price * oi.quantity), 0) AS total_price
+FROM companies c
+LEFT JOIN orders o
+    ON o.company_id = c.id
+LEFT JOIN order_items oi
+    ON oi.order_id = o.id
+LEFT JOIN bento b
+    ON b.id = oi.bento_id
+GROUP BY c.id, c.name, c.contact_name, c.email, c.phone
+ORDER BY c.name;
+```
+
+`contact_name`、`email`、`phone` はNULLを許容するため、Python側では `str | None` として扱い、未登録の場合は画面に「未登録」と表示します。
+
+注文が1件もない会社も一覧に表示できるよう、`orders` 以降は `LEFT JOIN` で結合しています。
+
 ---
 
 ### 4.2 `orders`
@@ -299,6 +326,21 @@ id: int
 name: str
 ```
 
+### `CompanyContact`
+
+```text
+id: int
+name: str
+contact_name: str | None
+email: str | None
+phone: str | None
+order_count: int
+last_order_date: str | None
+total_price: int
+```
+
+取引先一覧画面で使用する、会社の連絡先と注文実績です。
+
 ### `Bento`
 
 ```text
@@ -359,6 +401,7 @@ quantities: tuple[QuantitySelection, ...]
 | Method | Path | 内容 |
 |---|---|---|
 | GET | `/` | 注文登録画面 |
+| GET | `/companies` | 取引先一覧 |
 | POST | `/orders` | 注文登録 |
 | GET | `/orders` | 注文履歴 |
 | GET | `/orders/complete` | 注文完了・注文詳細 |
@@ -382,9 +425,39 @@ bentos
 
 `companies` は会社選択欄、`bentos` は弁当と価格・数量入力欄の生成に利用します。
 
+画面右上の「取引先一覧」から `GET /companies` へ遷移できます。
+
 ---
 
-## 6.2 POST `/orders`
+## 6.2 GET `/companies`
+
+取引先一覧画面を表示します。
+
+```http
+GET /companies
+```
+
+会社ごとに、
+
+- 会社名
+- 担当者名
+- メールアドレス
+- 電話番号
+- 注文件数
+- 最終注文日
+- 累計金額
+
+を表示します。
+
+`companies.contact_name`、`companies.email`、`companies.phone` を利用する画面です。
+
+メールアドレスは `mailto:`、電話番号は `tel:` リンクとして表示し、未登録の項目は「未登録」と表示します。
+
+会社名・担当者・連絡先による絞り込みは、ブラウザ側のJavaScriptで行います。
+
+---
+
+## 6.3 POST `/orders`
 
 注文を登録します。
 
@@ -430,7 +503,7 @@ FastAPI側では、`quantity_` を取り除いた文字列を整数に変換し�
 
 ---
 
-## 6.3 注文登録の処理
+## 6.4 注文登録の処理
 
 注文登録は、注文ヘッダと注文明細を**同一トランザクション**で処理します。
 
@@ -473,7 +546,7 @@ order_items
 
 ---
 
-## 6.4 GET `/orders`
+## 6.5 GET `/orders`
 
 注文履歴を表示します。
 
@@ -509,7 +582,7 @@ bento.price × order_items.quantity
 
 ---
 
-## 6.5 GET `/orders/complete`
+## 6.6 GET `/orders/complete`
 
 注文登録後の注文完了画面、および個別注文の詳細を表示します。
 
@@ -580,6 +653,18 @@ b.price * oi.quantity
 | 注文 | `POST /orders` | `orders` |
 | 注文明細 | `POST /orders` | `order_items` |
 
+取引先一覧画面では、次のように対応させています。
+
+| HTML | Python | PostgreSQL |
+|---|---|---|
+| 会社名 | `company.name` | `companies.name` |
+| 担当者 | `company.contact_name` | `companies.contact_name` |
+| メール | `company.email` | `companies.email` |
+| 電話 | `company.phone` | `companies.phone` |
+| 注文件数 | `company.order_count` | `orders` の件数 |
+| 最終注文日 | `company.last_order_date` | `MAX(orders.order_date)` |
+| 累計金額 | `company.total_price` | `SUM(bento.price * order_items.quantity)` |
+
 アレルギーについては、現在の画面・Python処理では未使用ですが、データベースには、
 
 ```text
@@ -601,6 +686,7 @@ bento_allergens
 |---|---|
 | `get_connection()` | PostgreSQLへの接続を作成 |
 | `fetch_companies()` | 会社一覧を取得 |
+| `fetch_company_contacts()` | 会社の連絡先と注文実績を取得 |
 | `fetch_bentos()` | 弁当一覧を取得 |
 | `fetch_bento_allergens()` | 弁当ごとのアレルゲン一覧を取得 |
 | `fetch_orders()` | 注文履歴を取得 |
@@ -609,7 +695,7 @@ bento_allergens
 
 ORMは使用せず、SQLを明示的に記述しています。
 
-データベースから取得した行は、`Company`、`Bento`、`OrderSummary`、`OrderItem` などのPydanticモデルへ変換します。
+データベースから取得した行は、`Company`、`CompanyContact`、`Bento`、`OrderSummary`、`OrderItem` などのPydanticモデルへ変換します。
 
 ---
 
@@ -656,6 +742,7 @@ flowchart TD
     DB[(PostgreSQL)]
 
     UI -->|GET /| API
+    UI -->|GET /companies| API
     UI -->|POST /orders| API
     UI -->|GET /orders| API
     UI -->|GET /orders/complete| API
@@ -715,12 +802,9 @@ flowchart TD
 - 個別注文の完了・詳細画面
 - 存在しない注文への404応答
 - 金額の「円」形式での表示
-
-一方、以下はデータベーススキーマには存在しますが、現在の注文処理では使用していません。
-
-- `companies.contact_name`
-- `companies.email`
-- `companies.phone`
+- 担当者・メールアドレス・電話番号を表示する取引先一覧画面
+- 会社ごとの注文件数・最終注文日・累計金額の集計
+- 取引先一覧のキーワード絞り込み
 
 ---
 
