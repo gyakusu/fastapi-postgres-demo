@@ -59,23 +59,38 @@ npm もビルドツールも不要です。
 
 ---
 
-## 2. PostgreSQL
+## 2. PostgreSQLと初回セットアップ（macOS）
 
-デフォルトの接続先は `demo_db` です。
+アプリのデフォルト接続先は `demo_db` です。macOSではHomebrewでPostgreSQLを
+インストール・起動したあと、リポジトリのルートでセットアップスクリプトを実行します。
+スクリプトがデータベースを作成し、未適用のマイグレーションを順に実行します。
 
-`db.py` では、環境変数 `DATABASE_URL` が設定されている場合はそれを使用し、設定されていない場合は以下を使用します。
-
-```text
-dbname=demo_db
+```bash
+brew install postgresql
+brew services start postgresql
+./scripts/setup_mac.sh
 ```
 
-接続確認：
+初期データとして、会社・弁当・アレルゲンと、それらを使った注文履歴が登録されます。
+マイグレーションは `schema_migrations` に記録されるため、セットアップスクリプトを
+再実行しても適用済みのSQLは繰り返し実行されません。
+
+その後、Python依存関係を同期してアプリを起動します。
+
+```bash
+uv sync
+uv run uvicorn app.main:app --reload
+```
+
+データベースへの接続確認：
 
 ```bash
 psql demo_db
 ```
 
-本番環境などでは、例えば `DATABASE_URL` を設定して接続先を切り替えられます。
+別のDB名でセットアップする場合は `DB_NAME=my_demo_db ./scripts/setup_mac.sh` を使い、
+アプリ起動時にも `DATABASE_URL="dbname=my_demo_db"` を設定してください。
+`DATABASE_URL` が設定されている場合、`app/db.py` はその値を優先します。
 
 ---
 
@@ -97,6 +112,11 @@ fastapi-postgres-demo/
 │       ├── order_complete.html
 │       ├── _summary.html        # 注文概要パネル（部分テンプレート）
 │       └── _company_rows.html   # 取引先カード（部分テンプレート）
+├── migrations/
+│   ├── 001_create_schema.sql    # テーブルと制約
+│   └── 002_seed_demo_data.sql   # 初期マスタ・注文データ
+├── scripts/
+│   └── setup_mac.sh             # DB作成とマイグレーション適用
 ├── tests/
 │   └── test_orders_complete.py
 ├── .github/
